@@ -1,0 +1,5 @@
+venvs/
+lerobot_recordings/
+lerobot/
+*.pyc
+__pycache__/
