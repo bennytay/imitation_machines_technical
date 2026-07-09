@@ -74,6 +74,32 @@ This skips training and loads the checkpoint committed to this repo, then runs i
 
 Either path ends the same way: the policy's output actions replace `wave_motion_node.py` as the thing driving the arm, so Terminal 1 (the bridge) needs to already be running.
 
+### Host Environment Setup (for dataset visualization only)
+
+The visualizer (`lerobot-dataset-viz`) requires GPU-backed rendering and was run on the
+host machine (macOS, Apple Silicon) rather than the VM used for Steps 1–3. This is a
+separate environment from the ROS2/MuJoCo VM setup above.
+
+```bash
+# Clone lerobot on the host, checked out at the same commit used for recording/conversion
+git clone https://github.com/huggingface/lerobot.git
+cd lerobot
+git checkout 8a74e0ac6d01706d67fddfed682a09d694d9c8c0
+
+# Create a conda environment (Python 3.12)
+conda create -n lerobot-viz python=3.12 -y
+conda activate lerobot-viz
+
+# Install ffmpeg via conda (required for this install path, per LeRobot's docs)
+conda install ffmpeg -c conda-forge -y
+
+# Install with the dataset_viz extra (dataset loading + rerun-sdk)
+pip install -e ".[dataset_viz]"
+```
+
+Then copy the dataset from the VM and run the visualizer as described above.
+
+
 ---
 
 ## 2. Key Design Decisions
@@ -125,8 +151,36 @@ GLFW (MuJoCo's default renderer) needs a display; the recorder runs over SSH wit
 
 **Reasoning:** this was a hard library constraint, not a modeling choice — the underlying `av` library's `add_stream` call breaks on a float FPS value.
 
-### Dataset visualizer: abandoned, being revisited
-Attempting to use the official `lerobot-dataset-viz` hit three sequential blockers: a stale scipy conflict (system vs. venv build mismatch), a native Rerun window that rendered blank/flashing (VM software rasterizer), and a torchcodec failure (its default build is CUDA-linked, which doesn't exist on this no-GPU ARM64 VM).
+### Dataset Visualization
+
+The recording and conversion pipeline (Steps 3.1–3.2 above) completed successfully on the
+Ubuntu 22.04 ARM64 VM, producing a valid `LeRobotDataset` at `~/lerobot_recordings/dataset`.
+The visualization step (`lerobot-dataset-viz`) was run on the host Mac (Apple Silicon, M2)
+rather than the VM, since it needs GPU-backed rendering that the VM's virtualized graphics
+stack doesn't support.
+
+Steps taken:
+- Copied the converted dataset from the VM to the host: `scp -r bennytay@192.168.64.2:~/lerobot_recordings/dataset ~/dev/lerobot_recordings/dataset`
+- Cloned `lerobot` fresh on the host and checked out the **same commit** used on the VM during
+  recording/conversion, to avoid any dataset-schema mismatch between versions
+- Created a `conda` environment (Python 3.12) and installed `ffmpeg` via
+  `conda install ffmpeg -c conda-forge`, per LeRobot's install docs
+- Installed the library with the `dataset_viz` extra (`pip install -e ".[dataset_viz]"`),
+  which bundles `dataset` + `viz` — the correct combination for this CLI
+- Ran:
+```bash
+  lerobot-dataset-viz \
+    --repo-id bennytay/so101_wave \
+    --root ~/dev/lerobot_recordings/dataset \
+    --episode-index 0 \
+    --mode local
+```
+
+**Result:** the Rerun viewer launched successfully, rendering the camera feed
+(`observation.images.cam`), the 6-DOF action trajectory, and joint state — all correctly
+synced and scrubbable across the episode timeline.
+
+![Rerun visualizer showing SO-101 camera feed, action trajectory, and joint state](./docs/rerun_viz_episode0.png)
 
 **[INSERT: figure of the visualizer troubleshooting chain]**
 
