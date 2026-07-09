@@ -225,8 +225,9 @@ synced and scrubbable across the episode timeline.
 
 **Making the robot execute a simple motion:**
 
-![SO-101 tracing the letter I](images/robot_screenshots/trace_letter_i.gif)
+![SO-101 tracing the letter I](images/robot_gifs/trace_letter_i.gif)
 
+**Obtaining telemetry data:**
 
 
 **[INSERT: figure — two-process architecture (Python 3.10 ROS2 side / Python 3.12 LeRobot side)]**
