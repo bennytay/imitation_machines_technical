@@ -83,7 +83,11 @@ class JacobianIKSolver:
 
     def _forward(self, q):
         self.data.qpos[: self.model.nq] = q
-        mujoco.mj_kinematics(self.model, self.data)
+        # mj_kinematics alone was observed to leave xanchor/xaxis stale on a
+        # freshly-constructed MjData (producing an all-zero Jacobian at the
+        # zero pose) -- mj_forward reliably populates everything mj_jacBody /
+        # mj_jacSite need.
+        mujoco.mj_forward(self.model, self.data)
 
     def _ee_pos(self):
         if self.ee_site_id is not None:
