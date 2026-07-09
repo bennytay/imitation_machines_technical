@@ -34,9 +34,13 @@ Open three terminals, each with the workspace sourced.
 ros2 run so101_bridge mujoco_bridge --ros-args -p mjcf_path:=$HOME/mujoco_menagerie/robotstudio_so101/scene.xml
 
 # Terminal 2 — demo motion driver
-ros2 run so101_bridge trace_letter_i --ros-args -p mjcf_path:=$HOME/mujoco_menagerie/robotstudio_so101/scene.xml
+ros2 run so101_bridge trace_letter_i --ros-args \
+  -p mjcf_path:=$HOME/mujoco_menagerie/robotstudio_so101/scene.xml \
+  -p ee_site_name:=gripperframe
 ```
 Expected result: the arm's end effector traces a capital "I" (top bar, middle stroke, bottom bar) via numerical IK — driven entirely by the `so101/joint_states` / `so101/joint_commands` topics.
+
+`ee_site_name:=gripperframe` targets the SO-101 MJCF's own gripper-mount site (paired with a `baseframe` site) for IK, rather than a raw body — this is what's confirmed working. If you point `motion.py` at a different MJCF, drop the parameter on the first run: it logs every joint/actuator/site/body name it finds and falls back to the last body in the kinematic chain, so you can identify and set the right `ee_site_name` (or `ee_body_name`) for that model. Other tunable parameters: `center` (x, y, z of the letter's midpoint), `width`, `height`, and `segment_duration` (seconds per leg) — the defaults here were sized for the SO-101's reach and confirmed working, but may need adjusting for a different arm/workspace.
 
 ### 1.3 Record an episode dataset
 ```bash
@@ -124,6 +128,17 @@ imitation_machines_technical/      # repo root == ROS2 package root
 The bridge, motion driver, and recorder only ever communicate through `so101/joint_states` / `so101/joint_commands`.
 
 **Reasoning:** this is what makes the recorder a drop-in subscriber rather than something wired into the simulator's internals — any future node (a different controller, a logger, a trained policy) can plug into the same two topics without touching the bridge code. This paid off directly in Step 4, where the trained policy replaces `motion.py` with zero changes to the bridge.
+
+### Task-space IK for scripted motion, not hand-tuned joint angles
+The original scripted motion (`wave_motion_node.py`) wrote two hardcoded joint angles directly — pure joint-space scripting, with no IK anywhere in the pipeline (`mujoco_bridge_node.py` applies `so101/joint_commands` straight to `data.ctrl`). That node has since been replaced by `motion.py`, which drives the arm in task space instead: a shape is specified as a handful of (x, y, z) end-effector waypoints, smoothly interpolated with minimum-jerk timing, and converted to joint angles every tick via numerical IK.
+
+**Decision:** implement IK as a small damped-least-squares Jacobian solver (`JacobianIKSolver` in `motion.py`) against a second, kinematics-only MuJoCo model instance loaded from the same MJCF — rather than a scipy-based optimizer or hand-tuned per-waypoint joint angles.
+
+**Reasoning:** `mujoco`/`numpy` are already dependencies, so this adds no new library. Hand-tuning joint angles per waypoint (the original wave-motion approach) doesn't scale to tracing an arbitrary geometric shape and is brittle to re-tune. The IK model instance is intentionally separate from `mujoco_bridge_node.py`'s physics-stepping model — it only ever calls `mj_forward` to compute forward kinematics/Jacobians for a candidate `qpos`, never steps simulated time, so it can't drift from or interfere with the bridge's authoritative simulation.
+
+**Gotcha:** the solver initially called `mujoco.mj_kinematics()` per IK iteration (cheaper than a full `mj_forward`, and sufficient in principle — kinematics alone determines body/site poses and joint anchors/axes). In practice this left the Jacobian exactly zero for every body in the model at the zero pose on a freshly-constructed `MjData`, so the solver could never move away from its `q=0` initial guess. Switching to `mujoco.mj_forward()` fixed it (confirmed with a standalone debug script against the real SO-101 MJCF before rolling the fix into `motion.py`). The extra cost of a full forward pass per iteration is negligible for a 6-DOF arm converging in well under the 50-iteration cap.
+
+**End-effector frame:** the SO-101 MJCF exposes a `gripperframe` site (paired with a `baseframe` site) attached to the `gripper` body — the natural IK target, set via the `ee_site_name` parameter. `motion.py` doesn't hardcode this: it logs every joint/actuator/site/body name at startup and, if `ee_site_name`/`ee_body_name` aren't set, falls back to the last body in the kinematic chain with a warning, so the right frame can be identified for a different MJCF without reading source code.
 
 ### The Python 3.10 / 3.12 split — the central architectural constraint
 LeRobot requires **Python 3.12+**. ROS2 Humble's `rclpy` requires **Python 3.10** (the system default). The two cannot share one interpreter.

@@ -15,9 +15,12 @@ top/bottom serif bars) in a vertical plane in front of the robot. Future
 scripted trajectories should live in this same file as additional
 Node subclasses / waypoint functions, reusing JacobianIKSolver.
 
-Run:
+Run (ee_site_name:=gripperframe targets this MJCF's own gripper-mount site --
+see the site/body name dump this node logs at startup if pointing at a
+different MJCF):
     ros2 run so101_bridge trace_letter_i --ros-args \
-        -p mjcf_path:=/home/bennytay/mujoco_menagerie/robotstudio_so101/scene.xml
+        -p mjcf_path:=/home/bennytay/mujoco_menagerie/robotstudio_so101/scene.xml \
+        -p ee_site_name:=gripperframe
 
 On startup this node logs every joint/actuator/site/body name it found in
 the model -- check that output if the 'ee_body_name' / 'ee_site_name'
@@ -39,26 +42,43 @@ def minimum_jerk_scale(s: float) -> float:
     return 6.0 * s**5 - 15.0 * s**4 + 10.0 * s**3
 
 
-def letter_i_waypoints(center, width, height):
+def letter_i_waypoints(center, width, height, plane='xz'):
     """
     Six (x, y, z) waypoints tracing a capital "I" with top/bottom serif bars,
     in the order: top-left -> top-right -> top-middle -> bottom-middle ->
     bottom-left -> bottom-right (then loops back to top-left).
 
-    `center` is (x, y, z) in the model's base frame; the letter is drawn in
-    whichever two axes vary (see TraceLetterI.plane), the third held fixed.
+    `center` is (x, y, z) in the model's base frame. The letter's width/height
+    vary along the two axes named in `plane` ('xz', 'xy', or 'yz'); the third
+    axis is held fixed at its `center` value.
     """
-    cx, cy, cz = center
+    if plane not in ('xz', 'xy', 'yz'):
+        raise ValueError(f"plane must be one of 'xz', 'xy', 'yz', got {plane!r}")
+
+    axis_index = {'x': 0, 'y': 1, 'z': 2}
+    horiz_i, vert_i = (axis_index[a] for a in plane)
+    fixed_i = ({0, 1, 2} - {horiz_i, vert_i}).pop()
+
     half_w = width / 2.0
     half_h = height / 2.0
-    return [
-        (cx - half_w, cy, cz + half_h),  # top-left
-        (cx + half_w, cy, cz + half_h),  # top-right
-        (cx, cy, cz + half_h),           # top-middle
-        (cx, cy, cz - half_h),           # bottom-middle
-        (cx - half_w, cy, cz - half_h),  # bottom-left
-        (cx + half_w, cy, cz - half_h),  # bottom-right
+    # (horizontal offset, vertical offset) for each of the 6 waypoints
+    offsets = [
+        (-half_w, half_h),   # top-left
+        (half_w, half_h),    # top-right
+        (0.0, half_h),       # top-middle
+        (0.0, -half_h),      # bottom-middle
+        (-half_w, -half_h),  # bottom-left
+        (half_w, -half_h),   # bottom-right
     ]
+
+    waypoints = []
+    for h_off, v_off in offsets:
+        p = list(center)
+        p[horiz_i] += h_off
+        p[vert_i] += v_off
+        p[fixed_i] = center[fixed_i]
+        waypoints.append(tuple(p))
+    return waypoints
 
 
 class JacobianIKSolver:
@@ -189,7 +209,7 @@ class TraceLetterI(Node):
         center = tuple(self.get_parameter('center').get_parameter_value().double_array_value)
         width = self.get_parameter('width').get_parameter_value().double_value
         height = self.get_parameter('height').get_parameter_value().double_value
-        self.waypoints = letter_i_waypoints(center, width, height)
+        self.waypoints = letter_i_waypoints(center, width, height, plane=self.plane)
         self.num_waypoints = len(self.waypoints)
 
         self.q_current = np.zeros(self.model.nq)
