@@ -223,7 +223,11 @@ synced and scrubbable across the episode timeline.
 
 
 
-**Making the robots execute simple motions:**
+**Making the robot execute a simple motion:**
+
+![SO-101 tracing the letter I](images/robot_screenshots/trace_letter_i.gif)
+
+
 
 **[INSERT: figure — two-process architecture (Python 3.10 ROS2 side / Python 3.12 LeRobot side)]**
 
