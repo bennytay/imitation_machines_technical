@@ -34,9 +34,9 @@ Open three terminals, each with the workspace sourced.
 ros2 run so101_bridge mujoco_bridge --ros-args -p mjcf_path:=$HOME/mujoco_menagerie/robotstudio_so101/scene.xml
 
 # Terminal 2 — demo motion driver
-ros2 run so101_bridge wave_motion
+ros2 run so101_bridge trace_letter_i --ros-args -p mjcf_path:=$HOME/mujoco_menagerie/robotstudio_so101/scene.xml
 ```
-Expected result: the arm raises its shoulder, then waves the wrist — driven entirely by the `so101/joint_states` / `so101/joint_commands` topics.
+Expected result: the arm's end effector traces a capital "I" (top bar, middle stroke, bottom bar) via numerical IK — driven entirely by the `so101/joint_states` / `so101/joint_commands` topics.
 
 ### 1.3 Record an episode dataset
 ```bash
@@ -70,9 +70,9 @@ python train_act.py --dataset_dir ~/lerobot_recordings/dataset --out_dir ~/lerob
 ```bash
 python run_policy.py --checkpoint checkpoints/act_final.ckpt
 ```
-This skips training and loads the checkpoint committed to this repo, then runs inference and publishes actions to `so101/joint_commands` — with Terminal 1 (the bridge) still running, you should see the arm move under the trained policy rather than the scripted `wave_motion` driver.
+This skips training and loads the checkpoint committed to this repo, then runs inference and publishes actions to `so101/joint_commands` — with Terminal 1 (the bridge) still running, you should see the arm move under the trained policy rather than the scripted `trace_letter_i` driver.
 
-Either path ends the same way: the policy's output actions replace `wave_motion_node.py` as the thing driving the arm, so Terminal 1 (the bridge) needs to already be running.
+Either path ends the same way: the policy's output actions replace `motion.py` as the thing driving the arm, so Terminal 1 (the bridge) needs to already be running.
 
 ### Host Environment Setup (for dataset visualization only)
 
@@ -115,7 +115,7 @@ imitation_machines_technical/      # repo root == ROS2 package root
 ├── resource/so101_bridge
 ├── so101_bridge/
 │   ├── mujoco_bridge_node.py      # sim + ROS2 bridge
-│   ├── wave_motion_node.py        # demo motion driver
+│   ├── motion.py                  # scripted motion drivers (e.g. trace_letter_i)
 │   └── episode_recorder_node.py   # dataset recorder
 └── convert_to_lerobot.py          # raw frames -> LeRobotDataset
 ```
@@ -123,7 +123,7 @@ imitation_machines_technical/      # repo root == ROS2 package root
 ### Pub/sub topic architecture, not direct calls
 The bridge, motion driver, and recorder only ever communicate through `so101/joint_states` / `so101/joint_commands`.
 
-**Reasoning:** this is what makes the recorder a drop-in subscriber rather than something wired into the simulator's internals — any future node (a different controller, a logger, a trained policy) can plug into the same two topics without touching the bridge code. This paid off directly in Step 4, where the trained policy replaces `wave_motion_node.py` with zero changes to the bridge.
+**Reasoning:** this is what makes the recorder a drop-in subscriber rather than something wired into the simulator's internals — any future node (a different controller, a logger, a trained policy) can plug into the same two topics without touching the bridge code. This paid off directly in Step 4, where the trained policy replaces `motion.py` with zero changes to the bridge.
 
 ### The Python 3.10 / 3.12 split — the central architectural constraint
 LeRobot requires **Python 3.12+**. ROS2 Humble's `rclpy` requires **Python 3.10** (the system default). The two cannot share one interpreter.
@@ -197,11 +197,18 @@ synced and scrubbable across the episode timeline.
 - `pip` inside a `--system-site-packages` venv will report system packages as satisfied even when they're the wrong build for the venv's Python version — use `--ignore-installed` to force a local copy.
 - This VM (ARM64, no GPU) repeatedly hits packages that default to CUDA-linked builds (`torch`, `torchcodec`) — always check for a CPU-only install path first for any new ML dependency.
 
----
 
 ## 3. Figures & Media
 
-**[INSERT: diagram of overall code/repo structure]**
+**Loading different types of robots into MuJoCo:**
+
+| SO-101 | Franka Panda | Boston Dynamics Spot | Unitree G1 |
+|---|---|---|---|
+| <img src="images/robot_screenshots/so101.png" width="300"> | <img src="images/robot_screenshots/franka_emika_panda.png" width="300"> | <img src="images/robot_screenshots/boston_dynamics_spot.png" width="300"> | <img src="images/robot_screenshots/unitree_g1.png" width="300"> |
+
+
+
+**Making the robots execute simple motions:**
 
 **[INSERT: figure — two-process architecture (Python 3.10 ROS2 side / Python 3.12 LeRobot side)]**
 
@@ -209,6 +216,6 @@ synced and scrubbable across the episode timeline.
 
 **[INSERT: image(s) of the SO-101 arm in simulation]**
 
-**[INSERT: video — arm driven by scripted wave motion (Steps 1–2)]**
+**[INSERT: video — arm driven by scripted "I" trace motion (Steps 1–2)]**
 
 **[INSERT: video — arm driven by the trained ACT policy (Step 4)]**

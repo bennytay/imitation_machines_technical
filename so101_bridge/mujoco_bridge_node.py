@@ -18,7 +18,7 @@ Run headless (fine over SSH, no viewer window):
         -p use_viewer:=false
 
 On startup this node logs every joint and actuator name it found in the model --
-check that output to know what indices to command in wave_motion_node.py.
+check that output to know what indices/frames to command in motion.py.
 """
 import threading
 

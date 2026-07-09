@@ -19,7 +19,7 @@ setup(
     entry_points={
         'console_scripts': [
             'mujoco_bridge = so101_bridge.mujoco_bridge_node:main',
-            'wave_motion = so101_bridge.wave_motion_node:main',
+            'trace_letter_i = so101_bridge.motion:main',
 	    'episode_recorder = so101_bridge.episode_recorder_node:main',
         ],
     },
