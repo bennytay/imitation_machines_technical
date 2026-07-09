@@ -45,9 +45,9 @@ Expected result: the arm's end effector traces a capital "I" (top bar, middle st
 ### 1.3 Record an episode dataset
 ```bash
 # Terminal 3 — recorder (same Python 3.10 / ROS2 environment)
-ros2 run so101_bridge episode_recorder --ros-args -p output_dir:=$HOME/lerobot_recordings/raw
+ros2 run so101_bridge episode_recorder --ros-args -p mjcf_path:=$HOME/mujoco_menagerie/robotstudio_so101/scene.xml
 ```
-Run alongside Terminals 1–2 while the arm moves. Repeat / restart for multiple episodes. Each episode is written to `~/lerobot_recordings/raw/episode_XXX/` (`frames/*.png`, `joint_states.jsonl`, `actions.jsonl`).
+Run alongside Terminals 1–2 **after** the motion driver (Terminal 2) is already running — the recorder captures whatever the arm is currently doing, so starting it before the motion node means it just records a stationary arm. `mjcf_path` has no default and must be set explicitly; other tunable parameters (`output_dir`, `num_episodes`, `episode_seconds`, `camera_name`, `image_width`, `image_height`, `capture_hz`) have working defaults — `output_dir` defaults to `~/lerobot_recordings/raw`, `num_episodes` to 10, `episode_seconds` to 8.0, `capture_hz` to 10.0 (actual achieved rate was lower — see Known Limitations). Each episode is written to `~/lerobot_recordings/raw/episode_XXX/` (`frames/*.png`, `joint_states.jsonl`, `actions.jsonl`).
 
 ### 1.4 Convert to LeRobot dataset format
 This step runs in a **separate Python 3.12 environment** — LeRobot cannot import under ROS2's Python 3.10.
@@ -56,8 +56,10 @@ This step runs in a **separate Python 3.12 environment** — LeRobot cannot impo
 python3.12 -m venv ~/venvs/lerobot --system-site-packages
 source ~/venvs/lerobot/bin/activate
 pip install -e ".[dataset]"          # from within your cloned lerobot repo
-python convert_to_lerobot.py --raw_dir ~/lerobot_recordings/raw --out_dir ~/lerobot_recordings/dataset
+python3 convert_to_lerobot.py
 ```
+`convert_to_lerobot.py` takes **no command-line arguments** — the output dataset root and the dataset's `repo_id` are both hardcoded in the script (`REPO_ID` near the top of the file). Edit that variable directly before each run if you want a new dataset rather than overwriting an existing one — `LeRobotDataset.create()` fails with `FileExistsError` if the output directory already exists, so either rename/move the prior dataset out of the way or change the output path in-script before re-running for a new recording.
+
 Expected result: a validated `LeRobotDataset` at `~/lerobot_recordings/dataset`, with all episodes encoded via AV1/PyAV.
 
 ### 1.5 Train and run the ACT policy
@@ -80,9 +82,7 @@ Either path ends the same way: the policy's output actions replace `motion.py` a
 
 ### Host Environment Setup (for dataset visualization only)
 
-The visualizer (`lerobot-dataset-viz`) requires GPU-backed rendering and was run on the
-host machine (macOS, Apple Silicon) rather than the VM used for Steps 1–3. This is a
-separate environment from the ROS2/MuJoCo VM setup above.
+The visualizer (`lerobot-dataset-viz`) requires GPU-backed rendering and was run on the host machine (macOS, Apple Silicon) rather than the VM used for Steps 1–3. This is a separate environment from the ROS2/MuJoCo VM setup above.
 
 ```bash
 # Clone lerobot on the host, checked out at the same commit used for recording/conversion
@@ -101,8 +101,7 @@ conda install ffmpeg -c conda-forge -y
 pip install -e ".[dataset_viz]"
 ```
 
-Then copy the dataset from the VM and run the visualizer as described above.
-
+Then copy the dataset from the VM and run the visualizer as described below.
 
 ---
 
@@ -110,8 +109,6 @@ Then copy the dataset from the VM and run the visualizer as described above.
 
 ### Repo / package structure
 The repo root doubles as the ROS2 package root (`package.xml`/`setup.py` live at the top level), with the importable Python package one level down in `so101_bridge/`. The ROS2 workspace symlink (`~/ros2_ws/src/so101_bridge`) must point at the **repo root**, not the inner folder, or colcon won't find the package manifest.
-
-```
 imitation_machines_technical/      # repo root == ROS2 package root
 ├── package.xml
 ├── setup.py
@@ -122,7 +119,6 @@ imitation_machines_technical/      # repo root == ROS2 package root
 │   ├── motion.py                  # scripted motion drivers (e.g. trace_letter_i)
 │   └── episode_recorder_node.py   # dataset recorder
 └── convert_to_lerobot.py          # raw frames -> LeRobotDataset
-```
 
 ### Pub/sub topic architecture, not direct calls
 The bridge, motion driver, and recorder only ever communicate through `so101/joint_states` / `so101/joint_commands`.
@@ -168,50 +164,40 @@ GLFW (MuJoCo's default renderer) needs a display; the recorder runs over SSH wit
 
 ### Dataset Visualization
 
-The recording and conversion pipeline (Steps 3.1–3.2 above) completed successfully on the
-Ubuntu 22.04 ARM64 VM, producing a valid `LeRobotDataset` at `~/lerobot_recordings/dataset`.
-The visualization step (`lerobot-dataset-viz`) was run on the host Mac (Apple Silicon, M2)
-rather than the VM, since it needs GPU-backed rendering that the VM's virtualized graphics
-stack doesn't support.
+The recording and conversion pipeline (Steps 1.3–1.4 above) completed successfully on the Ubuntu 22.04 ARM64 VM, producing a valid `LeRobotDataset`. The visualization step (`lerobot-dataset-viz`) was run on the host Mac (Apple Silicon, M2) rather than the VM, since it needs GPU-backed rendering that the VM's virtualized graphics stack doesn't support.
 
 Steps taken:
-- Copied the converted dataset from the VM to the host: `scp -r bennytay@192.168.64.2:~/lerobot_recordings/dataset ~/dev/lerobot_recordings/dataset`
-- Cloned `lerobot` fresh on the host and checked out the **same commit** used on the VM during
-  recording/conversion, to avoid any dataset-schema mismatch between versions
-- Created a `conda` environment (Python 3.12) and installed `ffmpeg` via
-  `conda install ffmpeg -c conda-forge`, per LeRobot's install docs
-- Installed the library with the `dataset_viz` extra (`pip install -e ".[dataset_viz]"`),
-  which bundles `dataset` + `viz` — the correct combination for this CLI
+- Copied the converted dataset from the VM to the host: `scp -r bennytay@192.168.64.2:~/lerobot_recordings/dataset ~/dev/lerobot_recordings/dataset_trace_i`
+- Cloned `lerobot` fresh on the host and checked out the **same commit** used on the VM during recording/conversion, to avoid any dataset-schema mismatch between versions
+- Created a `conda` environment (Python 3.12) and installed `ffmpeg` via `conda install ffmpeg -c conda-forge`, per LeRobot's install docs
+- Installed the library with the `dataset_viz` extra (`pip install -e ".[dataset_viz]"`), which bundles `dataset` + `viz` — the correct combination for this CLI
 - Ran:
 ```bash
   lerobot-dataset-viz \
-    --repo-id bennytay/so101_wave \
-    --root ~/dev/lerobot_recordings/dataset \
+    --repo-id bennytay/so101_trace_i \
+    --root ~/dev/lerobot_recordings/dataset_trace_i \
     --episode-index 0 \
     --mode local
 ```
 
-**Result:** the Rerun viewer launched successfully, rendering the camera feed
-(`observation.images.cam`), the 6-DOF action trajectory, and joint state — all correctly
-synced and scrubbable across the episode timeline.
+**Result:** the Rerun viewer launched successfully, rendering the camera feed (`observation.images.cam`), the 6-DOF action trajectory, and joint state — all correctly synced and scrubbable across the episode timeline.
 
-![Rerun visualizer showing SO-101 camera feed, action trajectory, and joint state](./docs/rerun_viz_episode0.png)
+![Rerun visualizer showing SO-101 camera feed, action trajectory, and joint state during the I-trace motion](images/rerun_viz_trace_i.png)
 
 **[INSERT: figure of the visualizer troubleshooting chain]**
 
-**Decision at the time:** abandon the live visualizer rather than keep sinking time into a VM-specific rendering/CUDA issue, and rely on terminal output + direct viewing of raw PNG frames as evidence instead.
-**Update:** actively revisiting this — will update this section with the fix (or the final reasoning for staying with the fallback) once resolved.
+**Resolved:** initial attempts on the VM hit two platform-specific blockers (software-rasterized rendering under UTM, and CUDA-linked TorchCodec builds with no GPU present) — fixed by running the visualizer natively on the host Mac instead, per the steps above.
 
 ### Known limitations
 - Capture rate is ~2Hz rather than the intended 10Hz, due to headless rendering overhead.
-- Dataset visualizer status: see above.
 
 ### Gotchas / lessons learned
 - `nano` fails with `Error opening terminal: xterm-ghostty` unless `TERM` is overridden.
 - `apt`'s "daemons using outdated libraries" restart prompts are routine during installs — leave checkboxes as-is, select `<Ok>`.
 - `pip` inside a `--system-site-packages` venv will report system packages as satisfied even when they're the wrong build for the venv's Python version — use `--ignore-installed` to force a local copy.
 - This VM (ARM64, no GPU) repeatedly hits packages that default to CUDA-linked builds (`torch`, `torchcodec`) — always check for a CPU-only install path first for any new ML dependency.
-
+- `episode_recorder` must be started **after** the motion driver is already running — starting it first just records a stationary arm (confirmed by an accidental 0.02s, near-empty episode during the trace-I recording).
+- `convert_to_lerobot.py` has no CLI args — output path and `repo_id` are hardcoded in-script and must be edited directly (and the prior output directory moved/removed) before converting a new recording.
 
 ## 3. Figures & Media
 
@@ -221,21 +207,16 @@ synced and scrubbable across the episode timeline.
 |---|---|---|---|
 | <img src="images/robot_screenshots/so101.png" width="300"> | <img src="images/robot_screenshots/franka_emika_panda.png" width="300"> | <img src="images/robot_screenshots/boston_dynamics_spot.png" width="300"> | <img src="images/robot_screenshots/unitree_g1.png" width="300"> |
 
-
-
 **Making the robot execute a simple motion:**
 
 ![SO-101 tracing the letter I](images/robot_gifs/trace_letter_i.gif)
 
 **Obtaining telemetry data:**
 
+![SO-101 telemetry data streaming during the I-trace motion](images/robot_gifs/telemetry_demo.gif)
 
 **[INSERT: figure — two-process architecture (Python 3.10 ROS2 side / Python 3.12 LeRobot side)]**
 
 **[INSERT: figure — dataset visualizer troubleshooting chain]**
-
-**[INSERT: image(s) of the SO-101 arm in simulation]**
-
-**[INSERT: video — arm driven by scripted "I" trace motion (Steps 1–2)]**
 
 **[INSERT: video — arm driven by the trained ACT policy (Step 4)]**
