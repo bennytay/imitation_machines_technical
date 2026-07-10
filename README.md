@@ -1,36 +1,33 @@
-# Imitation Machines — Technical Exercise
-
-SO-101 robot arm control and imitation-learning data pipeline: simulator setup, ROS2 integration, LeRobot dataset conversion, and ACT model training.
+# Technical Exercise in Machine Learning and Robotics (v2)
 
 This README is organized into three parts:
-1. **How to Run** — instructions to reproduce the pipeline
-2. **Key Design Decisions** — what was decided and why, across the whole project
-3. **Figures & Media** — diagrams, images, and video (to be added)
+1. **Instructions**: how to run the code
+2. **Design**: explaning key design decisions
+3. **Figures & Media**: screenshots + video demonstrating results from the different steps
 
----
+## 1. Instructions
 
-## 1. How to Run
+### System requirements
+- Ubuntu 22.04, ROS2 Humble sourced
+- Python 3.10 (ROS2) and Python 3.12 (LeRobot)
+- Mujoco Menagerie cloned locally
 
-### Prerequisites
-- Ubuntu 22.04, ROS2 Humble sourced (`source /opt/ros/humble/setup.bash`)
-- Python 3.10 (system default, for ROS2) **and** Python 3.12 (for LeRobot) — install 3.12 via the deadsnakes PPA if not already present
-- `mujoco_menagerie` cloned locally, with the SO-101 model available at `robotstudio_so101/scene.xml`
-- If running headless (no display): `export MUJOCO_GL=osmesa` and `sudo apt install libosmesa6-dev`
 
 ### 1.1 Build the ROS2 workspace
 ```bash
-mkdir -p ~/ros2_ws/src
-ln -s /path/to/this/repo ~/ros2_ws/src/so101_bridge   # symlink to REPO ROOT, not the inner so101_bridge/ folder
-cd ~/ros2_ws
-colcon build
-source install/setup.bash
+mkdir -p ~/ros2_ws/src # standard ROS2 workspace layout
+
+ln -s /path/to/this/repo ~/ros2_ws/src/so101_bridge # symlink repo into src/ folder
+
+cd ~/ros2_ws && colcon build # compiles + installs ROS2 packages
+
+source install/setup.bash # add package to ROS2 runtime env
 ```
 
 ### 1.2 Run the simulator + bridge
-Open three terminals, each with the workspace sourced.
 
 ```bash
-# Terminal 1 — sim + ROS2 bridge (needs a display, or MUJOCO_GL=osmesa if headless)
+# Terminal 1 — sim + ROS2 bridge 
 ros2 run so101_bridge mujoco_bridge --ros-args -p mjcf_path:=$HOME/mujoco_menagerie/robotstudio_so101/scene.xml
 
 # Terminal 2 — demo motion driver
@@ -38,28 +35,25 @@ ros2 run so101_bridge trace_letter_i --ros-args \
   -p mjcf_path:=$HOME/mujoco_menagerie/robotstudio_so101/scene.xml \
   -p ee_site_name:=gripperframe
 ```
-Expected result: the arm's end effector traces a capital "I" (top bar, middle stroke, bottom bar) via numerical IK — driven entirely by the `so101/joint_states` / `so101/joint_commands` topics.
-
-`ee_site_name:=gripperframe` targets the SO-101 MJCF's own gripper-mount site (paired with a `baseframe` site) for IK, rather than a raw body — this is what's confirmed working. If you point `motion.py` at a different MJCF, drop the parameter on the first run: it logs every joint/actuator/site/body name it finds and falls back to the last body in the kinematic chain, so you can identify and set the right `ee_site_name` (or `ee_body_name`) for that model. Other tunable parameters: `center` (x, y, z of the letter's midpoint), `width`, `height`, and `segment_duration` (seconds per leg) — the defaults here were sized for the SO-101's reach and confirmed working, but may need adjusting for a different arm/workspace.
+Expected result: the arm's end effector traces a capital "I" (top bar, middle stroke, bottom bar) via numerical IK 
 
 ### 1.3 Record an episode dataset
 ```bash
-# Terminal 3 — recorder (same Python 3.10 / ROS2 environment)
+# Terminal 3 — recorder (python 3.10)
 ros2 run so101_bridge episode_recorder --ros-args -p mjcf_path:=$HOME/mujoco_menagerie/robotstudio_so101/scene.xml
 ```
-Run alongside Terminals 1–2 **after** the motion driver (Terminal 2) is already running — the recorder captures whatever the arm is currently doing, so starting it before the motion node means it just records a stationary arm. `mjcf_path` has no default and must be set explicitly; other tunable parameters (`output_dir`, `num_episodes`, `episode_seconds`, `camera_name`, `image_width`, `image_height`, `capture_hz`) have working defaults — `output_dir` defaults to `~/lerobot_recordings/raw`, `num_episodes` to 10, `episode_seconds` to 8.0, `capture_hz` to 10.0 (actual achieved rate was lower — see Known Limitations). Each episode is written to `~/lerobot_recordings/raw/episode_XXX/` (`frames/*.png`, `joint_states.jsonl`, `actions.jsonl`).
+Run alongside Terminals 1–2 **after** the motion driver (Terminal 2) is already running.
+Each episode is written to `~/lerobot_recordings/raw/episode_XXX/` (`frames/*.png`, `joint_states.jsonl`, `actions.jsonl`).
 
 ### 1.4 Convert to LeRobot dataset format
-This step runs in a **separate Python 3.12 environment** — LeRobot cannot import under ROS2's Python 3.10.
+This step runs in a separate Python 3.12 environment due to LeRobot system requirements
 
 ```bash
 python3.12 -m venv ~/venvs/lerobot --system-site-packages
 source ~/venvs/lerobot/bin/activate
-pip install -e ".[dataset]"          # from within your cloned lerobot repo
-python3 convert_to_lerobot.py
+pip install -e ".[dataset]" # from within cloned lerobot repo
+python3 convert_to_lerobot.py --repo-id bennytay/so101_wave --output-root ~/lerobot_recordings/dataset
 ```
-`convert_to_lerobot.py` takes **no command-line arguments** — the output dataset root and the dataset's `repo_id` are both hardcoded in the script (`REPO_ID` near the top of the file). Edit that variable directly before each run if you want a new dataset rather than overwriting an existing one — `LeRobotDataset.create()` fails with `FileExistsError` if the output directory already exists, so either rename/move the prior dataset out of the way or change the output path in-script before re-running for a new recording.
-
 Expected result: a validated `LeRobotDataset` at `~/lerobot_recordings/dataset`, with all episodes encoded via AV1/PyAV.
 
 ### 1.5 Train and run the ACT policy
@@ -103,7 +97,6 @@ pip install -e ".[dataset_viz]"
 
 Then copy the dataset from the VM and run the visualizer as described below.
 
----
 
 ## 2. Key Design Decisions
 
@@ -200,7 +193,7 @@ Verified each layer independently along the way (raw JSONL via a debug script, t
 - `pip` inside a `--system-site-packages` venv will report system packages as satisfied even when they're the wrong build for the venv's Python version — use `--ignore-installed` to force a local copy.
 - This VM (ARM64, no GPU) repeatedly hits packages that default to CUDA-linked builds (`torch`, `torchcodec`) — always check for a CPU-only install path first for any new ML dependency.
 - `episode_recorder` must be started **after** the motion driver is already running — starting it first just records a stationary arm.
-- `convert_to_lerobot.py` has no CLI args — output path and `repo_id` are hardcoded in-script and must be edited directly (and the prior output directory moved/removed) before converting a new recording.
+- `convert_to_lerobot.py` takes `--repo-id`/`--output-root`/`--raw-dir`/`--force` flags; pass a fresh `--output-root`/`--repo-id` (or `--force`) before converting a new recording rather than overwriting the previous dataset in place.
 - A dataset conversion is a snapshot: if a bug upstream (e.g. the IK fix above) is fixed *after* you've already converted, the converted dataset is now stale and needs re-converting — nothing detects or warns about this automatically. What looked like a "near-empty recording" bug when first inspecting `lerobot-dataset-viz` turned out to be exactly this: the dataset predated the fix by ~12 minutes (caught by comparing the parquet file's mtime against the raw recording's own timestamps).
 - HuggingFace's `datasets` library caches loaded parquet tables under `~/.cache/huggingface/datasets`, keyed in a way that doesn't reliably invalidate when the source file at the same path is overwritten — after re-converting a dataset in place, clear that cache (`rm -rf ~/.cache/huggingface/datasets/parquet`) before re-running anything that reads it, or you'll keep seeing the old data.
 - `episode_recorder_node.py` opens `joint_states.jsonl`/`actions.jsonl` with `'w'` each run (correctly truncating), but previously left old `frames/*.png` files behind from prior runs at the same `episode_XXX` path — now fixed by clearing the `frames/` directory at the start of each episode.
