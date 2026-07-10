@@ -100,20 +100,38 @@ Then copy the dataset from the VM and run the visualizer as described below.
 
 ## 2. Key Design Decisions
 
-### Repo / package structure
-The repo root doubles as the ROS2 package root (`package.xml`/`setup.py` live at the top level), with the importable Python package one level down in `so101_bridge/`. The ROS2 workspace symlink (`~/ros2_ws/src/so101_bridge`) must point at the **repo root**, not the inner folder, or colcon won't find the package manifest.
-imitation_machines_technical/      # repo root == ROS2 package root
-├── package.xml
-├── setup.py
-├── setup.cfg
-├── resource/so101_bridge
-├── so101_bridge/
-│   ├── mujoco_bridge_node.py      # sim + ROS2 bridge
-│   ├── motion.py                  # scripted motion drivers (e.g. trace_letter_i)
-│   └── episode_recorder_node.py   # dataset recorder
-└── convert_to_lerobot.py          # raw frames -> LeRobotDataset
+### Overall Architecture
 
-### Pub/sub topic architecture, not direct calls
+![split architecture](images/diagrams/code_architecture.png)
+
+**Technical Constraint:** LeRobot requires Python 3.12+ but ROS2 Humble's rclpy requires Python 3.10, hence they can't share the same interpreter.
+
+Therefore, the architecture deliberately splits the work into two independent OS processes, connected only by plain files on disk. The ROS2/recorder side (3.10) writes raw frames + logs; a separate LeRobot venv (3.12) reads them and builds the dataset, and later, runs training/inference.
+
+This is because trying to reconcile the two Python versions in one process would be fragile and hard to debug. Two processes bridged by files means each side uses whatever environment suits it, and the intermediate files are also easier to inspect mid-pipeline than an in-memory queue would be. The same split reappears in Step 4: the trained policy runs in the 3.12 venv, so a thin relay is needed to get its output actions onto `so101/joint_commands`.
+
+### Python 3.10 - ROS2 Nodes:
+
+The pipeline comprises of 3 independent ROS2 nodes. Because none of the nodes call each other directly / know of each other, this offers a host of architectural benefits:
+
+- Each node can be developed/tested/debugged in isolation
+- Swapping or extending one aspect doesn't require editing the code of the others
+- Multiple subscribers can observe the same data without conflict 
+- Each node can fail without taking the others down
+
+
+1: `mujoco_bridge_node.py` (the bridge)
+
+This loads SO101's MJCF model into MuJoCo and steps the physics simultation. It is responsible for simulating the arm, and rendering the viewer window. It exposes the arm's current joint position to `so101/joint_states` and applies what it receives thru `so101/joint_commands` directly to the sim actuators. 
+
+2: `motion.py` (motion driver)
+
+This generates a scripted trajectory (i.e. a capital I shape) as a sequence of end-effector waypoints; solves joint angles needed to reach the waypoint thru its own IK solver; publishes the resulting joint angles to `so101/joint_commands`.
+
+3: `episode_recorder_node.py` (recorder)
+
+This subscribes to both `so101/joint_states` and `so101/joint_commands` and logs what it passively observes to the disk for a fixed duration per episode. 
+
 The bridge, motion driver, and recorder only ever communicate through `so101/joint_states` / `so101/joint_commands`.
 
 **Reasoning:** this is what makes the recorder a drop-in subscriber rather than something wired into the simulator's internals — any future node (a different controller, a logger, a trained policy) can plug into the same two topics without touching the bridge code. This paid off directly in Step 4, where the trained policy replaces `motion.py` with zero changes to the bridge.
@@ -129,12 +147,6 @@ The original scripted motion (`wave_motion_node.py`) wrote two hardcoded joint a
 
 **End-effector frame:** the SO-101 MJCF exposes a `gripperframe` site (paired with a `baseframe` site) attached to the `gripper` body — the natural IK target, set via the `ee_site_name` parameter. `motion.py` doesn't hardcode this: it logs every joint/actuator/site/body name at startup and, if `ee_site_name`/`ee_body_name` aren't set, falls back to the last body in the kinematic chain with a warning, so the right frame can be identified for a different MJCF without reading source code.
 
-### The Python 3.10 / 3.12 split — the central architectural constraint
-LeRobot requires **Python 3.12+**. ROS2 Humble's `rclpy` requires **Python 3.10** (the system default). The two cannot share one interpreter.
-
-**Decision:** split the work into two independent OS processes, connected only by plain files on disk — no shared memory, no IPC library. The ROS2/recorder side (3.10) writes raw frames + logs; a separate LeRobot venv (3.12) reads them and builds the dataset, and later, runs training/inference.
-
-**Reasoning:** trying to reconcile the two Python versions in one process would be fragile and hard to debug. Two processes bridged by files means each side uses whatever environment suits it, and the intermediate files are also easier to inspect mid-pipeline than an in-memory queue would be. The same split reappears in Step 4: the trained policy runs in the 3.12 venv, so a thin relay is needed to get its output actions onto `so101/joint_commands`.
 
 **[INSERT: figure of the two-process architecture]**
 
