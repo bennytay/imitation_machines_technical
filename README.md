@@ -132,28 +132,17 @@ This generates a scripted trajectory (i.e. a capital I shape) as a sequence of e
 
 This subscribes to both `so101/joint_states` and `so101/joint_commands` and logs what it passively observes to the disk for a fixed duration per episode. 
 
-The bridge, motion driver, and recorder only ever communicate through `so101/joint_states` / `so101/joint_commands`.
+> NOTE: The bridge, motion driver, and recorder only ever communicate through `so101/joint_states` / `so101/joint_commands`.
+>
+> This is what makes the recorder a drop-in subscriber rather than something wired into the simulator's internals — any future node (a different controller, a logger, a trained policy) can plug into the same two topics without touching the bridge code. This paid off directly in Step 4, where the trained policy replaces `motion.py` with zero changes to the bridge.
 
-**Reasoning:** this is what makes the recorder a drop-in subscriber rather than something wired into the simulator's internals — any future node (a different controller, a logger, a trained policy) can plug into the same two topics without touching the bridge code. This paid off directly in Step 4, where the trained policy replaces `motion.py` with zero changes to the bridge.
+### Implementing Inverse Kinematics
 
-### Task-space IK for scripted motion, not hand-tuned joint angles
-The original scripted motion (`wave_motion_node.py`) wrote two hardcoded joint angles directly — pure joint-space scripting, with no IK anywhere in the pipeline (`mujoco_bridge_node.py` applies `so101/joint_commands` straight to `data.ctrl`). That node has since been replaced by `motion.py`, which drives the arm in task space instead: a shape is specified as a handful of (x, y, z) end-effector waypoints, smoothly interpolated with minimum-jerk timing, and converted to joint angles every tick via numerical IK.
+![inverse kins flowchart](images/diagrams/inverse_kins_diagram.png)
 
-**Decision:** implement IK as a small damped-least-squares Jacobian solver (`JacobianIKSolver` in `motion.py`) against a second, kinematics-only MuJoCo model instance loaded from the same MJCF — rather than a scipy-based optimizer or hand-tuned per-waypoint joint angles.
+`motion.py` drives the arm through task-space control, with the desired motion described as a handful of 3D waypoints, with inverse kinematics converting each target position into the joint angles needed to get there.This process is recalculated every tick. 
 
-**Reasoning:** `mujoco`/`numpy` are already dependencies, so this adds no new library. Hand-tuning joint angles per waypoint (the original wave-motion approach) doesn't scale to tracing an arbitrary geometric shape and is brittle to re-tune. The IK model instance is intentionally separate from `mujoco_bridge_node.py`'s physics-stepping model — it only ever calls `mj_forward` to compute forward kinematics/Jacobians for a candidate `qpos`, never steps simulated time, so it can't drift from or interfere with the bridge's authoritative simulation.
-
-**Gotcha:** the solver initially called `mujoco.mj_kinematics()` per IK iteration (cheaper than a full `mj_forward`, and sufficient in principle — kinematics alone determines body/site poses and joint anchors/axes). In practice this left the Jacobian exactly zero for every body in the model at the zero pose on a freshly-constructed `MjData`, so the solver could never move away from its `q=0` initial guess. Switching to `mujoco.mj_forward()` fixed it (confirmed with a standalone debug script against the real SO-101 MJCF before rolling the fix into `motion.py`). The extra cost of a full forward pass per iteration is negligible for a 6-DOF arm converging in well under the 50-iteration cap.
-
-**End-effector frame:** the SO-101 MJCF exposes a `gripperframe` site (paired with a `baseframe` site) attached to the `gripper` body — the natural IK target, set via the `ee_site_name` parameter. `motion.py` doesn't hardcode this: it logs every joint/actuator/site/body name at startup and, if `ee_site_name`/`ee_body_name` aren't set, falls back to the last body in the kinematic chain with a warning, so the right frame can be identified for a different MJCF without reading source code.
-
-
-**[INSERT: figure of the two-process architecture]**
-
-### Recorder: mirrors state, doesn't re-simulate it
-`episode_recorder_node.py` mirrors `qpos` into its own MjModel copy via `mj_forward` — it does **not** step its own physics.
-
-**Reasoning:** the recorder should reflect the authoritative arm state coming from the bridge, not simulate its own copy of physics. Letting it step physics independently risks the recorder's view of the world silently diverging from what the bridge/viewer actually shows — a subtle bug that would only surface later, in the recorded data itself.
+This was implemented through the construction of a small Jacobian-based solver `JacobianIKSolver` in `motion.py` which is built upon the `mujoco`/`numpy` tools, and runs against a second physics-free copy of the robot model such that the trial and error calculation space doesn't interfere with the actual rendered simultation. Instead of hardcoding which specific point on the robot the inverse kinematics system aims for, the code auto discoveres and logs all robot's joint names at startup so right target can be identified for different robot model without reading through source code. 
 
 ### Headless rendering via OSMesa
 GLFW (MuJoCo's default renderer) needs a display; the recorder runs over SSH with no `DISPLAY`, so it crashed on startup.
