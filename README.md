@@ -180,13 +180,16 @@ Steps taken:
     --mode local
 ```
 
-**Result:** the Rerun viewer launched successfully, rendering the camera feed (`observation.images.cam`), the 6-DOF action trajectory, and joint state — all correctly synced and scrubbable across the episode timeline.
-
-![Rerun visualizer showing SO-101 camera feed, action trajectory, and joint state during the I-trace motion](images/rerun_viz_trace_i.png)
-
-**[INSERT: figure of the visualizer troubleshooting chain]**
+**Result:** the Rerun viewer launched successfully, rendering the camera feed (`observation.images.cam`), the 6-DOF action trajectory, and joint state — all correctly synced and scrubbable across the episode timeline. See the recording below in [Figures & Media](#3-figures--media).
 
 **Resolved:** initial attempts on the VM hit two platform-specific blockers (software-rasterized rendering under UTM, and CUDA-linked TorchCodec builds with no GPU present) — fixed by running the visualizer natively on the host Mac instead, per the steps above.
+
+**Troubleshooting chain (dataset appeared empty/flat in the viewer):** after the above was working end-to-end, the visualizer still initially showed near-zero, unmoving `observation.state`/`action` plots and a static-looking camera feed. This turned out to be three separate, stacked issues, not one:
+1. **Stale converted dataset.** The `dataset_trace_i` being visualized had been built (via `convert_to_lerobot.py`) from a raw recording captured *before* the `motion.py` IK fix above, i.e. while the arm was still stuck at its near-zero home pose. Confirmed directly: every episode's `observation.state` sat at an identical ~0.0002 std, and the parquet file's mtime predated the healthy raw recording's timestamps by ~12 minutes. Fix: re-run `convert_to_lerobot.py` against the current raw recording and re-copy the dataset to the host.
+2. **Stale HuggingFace `datasets` cache.** Even after re-converting, the visualizer kept showing the old values — `~/.cache/huggingface/datasets` caches loaded parquet tables and didn't invalidate just because the source file at the same path was overwritten. Fix: `rm -rf ~/.cache/huggingface/datasets/parquet` (plus its `.lock` files) before re-running the visualizer.
+3. **Rerun viewer's persisted zoom.** With correct data flowing, the `state` panel's Y-axis was still stuck auto-fit to `observation.state`'s dimension 0 (`shoulder_pan`), which barely rotates for this trace since the "I" is drawn in a single fixed vertical plane — its true range (~0.003 rad) is ~2000x smaller than the other 5 joints (~1.7 to 1.3 rad), so those were plotted far off-screen. Fix: double-click inside the plot panel to reset/autofit the view to all series.
+
+Verified each layer independently along the way (raw JSONL via a debug script, the parquet directly via `pandas`, `meta/stats.json`, and finally the viewer) rather than assuming a fix at one layer meant the whole pipeline was fixed.
 
 ### Known limitations
 - Capture rate is ~2Hz rather than the intended 10Hz, due to headless rendering overhead.
@@ -196,8 +199,11 @@ Steps taken:
 - `apt`'s "daemons using outdated libraries" restart prompts are routine during installs — leave checkboxes as-is, select `<Ok>`.
 - `pip` inside a `--system-site-packages` venv will report system packages as satisfied even when they're the wrong build for the venv's Python version — use `--ignore-installed` to force a local copy.
 - This VM (ARM64, no GPU) repeatedly hits packages that default to CUDA-linked builds (`torch`, `torchcodec`) — always check for a CPU-only install path first for any new ML dependency.
-- `episode_recorder` must be started **after** the motion driver is already running — starting it first just records a stationary arm (confirmed by an accidental 0.02s, near-empty episode during the trace-I recording).
+- `episode_recorder` must be started **after** the motion driver is already running — starting it first just records a stationary arm.
 - `convert_to_lerobot.py` has no CLI args — output path and `repo_id` are hardcoded in-script and must be edited directly (and the prior output directory moved/removed) before converting a new recording.
+- A dataset conversion is a snapshot: if a bug upstream (e.g. the IK fix above) is fixed *after* you've already converted, the converted dataset is now stale and needs re-converting — nothing detects or warns about this automatically. What looked like a "near-empty recording" bug when first inspecting `lerobot-dataset-viz` turned out to be exactly this: the dataset predated the fix by ~12 minutes (caught by comparing the parquet file's mtime against the raw recording's own timestamps).
+- HuggingFace's `datasets` library caches loaded parquet tables under `~/.cache/huggingface/datasets`, keyed in a way that doesn't reliably invalidate when the source file at the same path is overwritten — after re-converting a dataset in place, clear that cache (`rm -rf ~/.cache/huggingface/datasets/parquet`) before re-running anything that reads it, or you'll keep seeing the old data.
+- `episode_recorder_node.py` opens `joint_states.jsonl`/`actions.jsonl` with `'w'` each run (correctly truncating), but previously left old `frames/*.png` files behind from prior runs at the same `episode_XXX` path — now fixed by clearing the `frames/` directory at the start of each episode.
 
 ## 3. Figures & Media
 
@@ -215,8 +221,10 @@ Steps taken:
 
 ![SO-101 telemetry data streaming during the I-trace motion](images/robot_gifs/telemetry_demo.gif)
 
-**[INSERT: figure — two-process architecture (Python 3.10 ROS2 side / Python 3.12 LeRobot side)]**
+**Visualizing the recorded dataset (`lerobot-dataset-viz`):**
 
-**[INSERT: figure — dataset visualizer troubleshooting chain]**
+![Rerun viewer showing the SO-101 camera feed, action trajectory, and joint state for the converted I-trace dataset](images/robot_gifs/lerobot_dataset_viz.gif)
+
+**[INSERT: figure — two-process architecture (Python 3.10 ROS2 side / Python 3.12 LeRobot side)]**
 
 **[INSERT: video — arm driven by the trained ACT policy (Step 4)]**

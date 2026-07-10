@@ -25,6 +25,7 @@ Python 3.10, NOT the lerobot venv):
 """
 import json
 import os
+import shutil
 import time
 
 import numpy as np
@@ -99,7 +100,12 @@ class EpisodeRecorder(Node):
             return
 
         self.episode_dir = os.path.join(self.output_dir, f'episode_{self.episode_idx:03d}')
-        os.makedirs(os.path.join(self.episode_dir, 'frames'), exist_ok=True)
+        frames_dir = os.path.join(self.episode_dir, 'frames')
+        # A prior run may have left stale frame PNGs here (joint_states.jsonl /
+        # actions.jsonl get truncated below, but frame files don't auto-clear) --
+        # wipe the directory so this run's frame_idx always starts from a clean slate.
+        shutil.rmtree(frames_dir, ignore_errors=True)
+        os.makedirs(frames_dir, exist_ok=True)
         self.joint_log = open(os.path.join(self.episode_dir, 'joint_states.jsonl'), 'w')
         self.action_log = open(os.path.join(self.episode_dir, 'actions.jsonl'), 'w')
         self.frame_idx = 0
