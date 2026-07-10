@@ -5,7 +5,8 @@ This README is organized into three parts:
 2. **Design**: explaning key design decisions
 3. **Figures & Media**: screenshots + video demonstrating results from the different steps
 
-## 1. Instructions
+<details>
+<summary><h2>1. Instructions</h2></summary>
 
 ### System requirements
 - Ubuntu 22.04, ROS2 Humble sourced
@@ -97,8 +98,10 @@ pip install -e ".[dataset_viz]"
 
 Then copy the dataset from the VM and run the visualizer as described below.
 
+</details>
 
-## 2. Key Design Decisions
+<details>
+<summary><h2>2. Key Design Decisions</h2></summary>
 
 ### Overall Architecture
 
@@ -145,67 +148,41 @@ This subscribes to both `so101/joint_states` and `so101/joint_commands` and logs
 This was implemented through the construction of a small Jacobian-based solver `JacobianIKSolver` in `motion.py` which is built upon the `mujoco`/`numpy` tools, and runs against a second physics-free copy of the robot model such that the trial and error calculation space doesn't interfere with the actual rendered simultation. Instead of hardcoding which specific point on the robot the inverse kinematics system aims for, the code auto discoveres and logs all robot's joint names at startup so right target can be identified for different robot model without reading through source code. 
 
 ### Headless rendering via OSMesa
-GLFW (MuJoCo's default renderer) needs a display; the recorder runs over SSH with no `DISPLAY`, so it crashed on startup.
 
-**Decision:** switched to OSMesa software rendering (`MUJOCO_GL=osmesa`, plus `libosmesa6-dev`).
+Note that the recorder needs its own render pass because the LeRobot dataset requires saved camera image files per timestep compared to the live on-screen display from the MuJoCo bridge's viewer window. Thus, the recorder holds a separate MuJoCo instnace (mirroring the bridge's state) to render + write frames to disk.
 
-**Trade-off:** software rendering is slow enough per-frame that it directly limited the achievable capture rate — recording ended up at ~2Hz rather than the intended 10Hz (10 episodes, 12–19 frames each, ~120 frames total). This was an overhead problem, not a logic bug.
+The recorder uses  OSMesa software rendering (`MUJOCO_GL=osmesa`, plus `libosmesa6-dev`). This enables the recorder to run headless over SSH without crashing, because OSMesa only requires CPU cycles. In contrast, MuJoCo's default renderer GLFW needs a real display, which SSH sessions by default don't have. 
+
+Choosing OSMesa was most practical for my hardware setup, as the VM used on my M2 Macbook Air (UTM) has no GPU passthrough, meaning I couldn't use EGL, for instance, which needs an actual GPU to be present.
+
+
 
 ### Integer FPS for dataset conversion
-`convert_to_lerobot.py` sets FPS to an integer (`2`), not the true fractional capture rate.
 
-**Reasoning:** this was a hard library constraint, not a modeling choice — the underlying `av` library's `add_stream` call breaks on a float FPS value.
+In real world timing, the true capture rate is fractional (e.g. 2.35Hz, 1.87Hz). But `convert_to_lerobot.py` needs to set a clear frame rate for the video when it builds the dataset.
+
+The `av` library used for this has a function called `add_stream`. However this requires FPS be an integer, so the choice was made to set it to `2` rather than the true fractional rate.
 
 ### Dataset Visualization
 
-The recording and conversion pipeline (Steps 1.3–1.4 above) completed successfully on the Ubuntu 22.04 ARM64 VM, producing a valid `LeRobotDataset`. The visualization step (`lerobot-dataset-viz`) was run on the host Mac (Apple Silicon, M2) rather than the VM, since it needs GPU-backed rendering that the VM's virtualized graphics stack doesn't support.
+![lerobot dataset visualisation](images/diagrams/lerobot_viz_ss.png)
 
-Steps taken:
-- Copied the converted dataset from the VM to the host: `scp -r bennytay@192.168.64.2:~/lerobot_recordings/dataset ~/dev/lerobot_recordings/dataset_trace_i`
-- Cloned `lerobot` fresh on the host and checked out the **same commit** used on the VM during recording/conversion, to avoid any dataset-schema mismatch between versions
-- Created a `conda` environment (Python 3.12) and installed `ffmpeg` via `conda install ffmpeg -c conda-forge`, per LeRobot's install docs
-- Installed the library with the `dataset_viz` extra (`pip install -e ".[dataset_viz]"`), which bundles `dataset` + `viz` — the correct combination for this CLI
-- Ran:
-```bash
-  lerobot-dataset-viz \
-    --repo-id bennytay/so101_trace_i \
-    --root ~/dev/lerobot_recordings/dataset_trace_i \
-    --episode-index 0 \
-    --mode local
-```
+Initially, I tried to run the LeRobot datset visualisation tool on the VM, however it failed due to CUDA which doesn't exist on non-GPU. The solution was to instead copy the dataset from the VM to the host laptop (my m2 macbook) and run the visualisation tool through there.
 
-**Result:** the Rerun viewer launched successfully, rendering the camera feed (`observation.images.cam`), the 6-DOF action trajectory, and joint state — all correctly synced and scrubbable across the episode timeline. See the recording below in [Figures & Media](#3-figures--media).
+Summary of process: The recording and conversion pipeline (Steps 1.3–1.4 above) completed successfully on the Ubuntu 22.04 ARM64 VM, producing a valid `LeRobotDataset`. The visualization step (`lerobot-dataset-viz`) was run on the host Mac (Apple Silicon, M2) rather than the VM, since it needs GPU-backed rendering that the VM's virtualized graphics stack doesn't support.
 
-**Resolved:** initial attempts on the VM hit two platform-specific blockers (software-rasterized rendering under UTM, and CUDA-linked TorchCodec builds with no GPU present) — fixed by running the visualizer natively on the host Mac instead, per the steps above.
+</details>
 
-**Troubleshooting chain (dataset appeared empty/flat in the viewer):** after the above was working end-to-end, the visualizer still initially showed near-zero, unmoving `observation.state`/`action` plots and a static-looking camera feed. This turned out to be three separate, stacked issues, not one:
-1. **Stale converted dataset.** The `dataset_trace_i` being visualized had been built (via `convert_to_lerobot.py`) from a raw recording captured *before* the `motion.py` IK fix above, i.e. while the arm was still stuck at its near-zero home pose. Confirmed directly: every episode's `observation.state` sat at an identical ~0.0002 std, and the parquet file's mtime predated the healthy raw recording's timestamps by ~12 minutes. Fix: re-run `convert_to_lerobot.py` against the current raw recording and re-copy the dataset to the host.
-2. **Stale HuggingFace `datasets` cache.** Even after re-converting, the visualizer kept showing the old values — `~/.cache/huggingface/datasets` caches loaded parquet tables and didn't invalidate just because the source file at the same path was overwritten. Fix: `rm -rf ~/.cache/huggingface/datasets/parquet` (plus its `.lock` files) before re-running the visualizer.
-3. **Rerun viewer's persisted zoom.** With correct data flowing, the `state` panel's Y-axis was still stuck auto-fit to `observation.state`'s dimension 0 (`shoulder_pan`), which barely rotates for this trace since the "I" is drawn in a single fixed vertical plane — its true range (~0.003 rad) is ~2000x smaller than the other 5 joints (~1.7 to 1.3 rad), so those were plotted far off-screen. Fix: double-click inside the plot panel to reset/autofit the view to all series.
-
-Verified each layer independently along the way (raw JSONL via a debug script, the parquet directly via `pandas`, `meta/stats.json`, and finally the viewer) rather than assuming a fix at one layer meant the whole pipeline was fixed.
-
-### Known limitations
-- Capture rate is ~2Hz rather than the intended 10Hz, due to headless rendering overhead.
-
-### Gotchas / lessons learned
-- `nano` fails with `Error opening terminal: xterm-ghostty` unless `TERM` is overridden.
-- `apt`'s "daemons using outdated libraries" restart prompts are routine during installs — leave checkboxes as-is, select `<Ok>`.
-- `pip` inside a `--system-site-packages` venv will report system packages as satisfied even when they're the wrong build for the venv's Python version — use `--ignore-installed` to force a local copy.
-- This VM (ARM64, no GPU) repeatedly hits packages that default to CUDA-linked builds (`torch`, `torchcodec`) — always check for a CPU-only install path first for any new ML dependency.
-- `episode_recorder` must be started **after** the motion driver is already running — starting it first just records a stationary arm.
-- `convert_to_lerobot.py` takes `--repo-id`/`--output-root`/`--raw-dir`/`--force` flags; pass a fresh `--output-root`/`--repo-id` (or `--force`) before converting a new recording rather than overwriting the previous dataset in place.
-- A dataset conversion is a snapshot: if a bug upstream (e.g. the IK fix above) is fixed *after* you've already converted, the converted dataset is now stale and needs re-converting — nothing detects or warns about this automatically. What looked like a "near-empty recording" bug when first inspecting `lerobot-dataset-viz` turned out to be exactly this: the dataset predated the fix by ~12 minutes (caught by comparing the parquet file's mtime against the raw recording's own timestamps).
-- HuggingFace's `datasets` library caches loaded parquet tables under `~/.cache/huggingface/datasets`, keyed in a way that doesn't reliably invalidate when the source file at the same path is overwritten — after re-converting a dataset in place, clear that cache (`rm -rf ~/.cache/huggingface/datasets/parquet`) before re-running anything that reads it, or you'll keep seeing the old data.
-- `episode_recorder_node.py` opens `joint_states.jsonl`/`actions.jsonl` with `'w'` each run (correctly truncating), but previously left old `frames/*.png` files behind from prior runs at the same `episode_XXX` path — now fixed by clearing the `frames/` directory at the start of each episode.
-
-## 3. Figures & Media
+<details>
+<summary><h2>3. Figures & Media</h2></summary>
 
 **Loading different types of robots into MuJoCo:**
 
-| SO-101 | Franka Panda | Boston Dynamics Spot | Unitree G1 |
-|---|---|---|---|
-| <img src="images/robot_screenshots/so101.png" width="300"> | <img src="images/robot_screenshots/franka_emika_panda.png" width="300"> | <img src="images/robot_screenshots/boston_dynamics_spot.png" width="300"> | <img src="images/robot_screenshots/unitree_g1.png" width="300"> |
+| SO-101 | Franka Panda |
+|---|---|
+| <img src="images/robot_screenshots/so101.png" width="400"> | <img src="images/robot_screenshots/franka_emika_panda.png" width="400"> |
+| **Boston Dynamics Spot** | **Unitree G1** |
+| <img src="images/robot_screenshots/boston_dynamics_spot.png" width="400"> | <img src="images/robot_screenshots/unitree_g1.png" width="400"> |
 
 **Making the robot execute a simple motion:**
 
@@ -222,3 +199,5 @@ Verified each layer independently along the way (raw JSONL via a debug script, t
 **[INSERT: figure — two-process architecture (Python 3.10 ROS2 side / Python 3.12 LeRobot side)]**
 
 **[INSERT: video — arm driven by the trained ACT policy (Step 4)]**
+
+</details>
