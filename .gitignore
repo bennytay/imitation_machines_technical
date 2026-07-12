@@ -3,3 +3,4 @@ lerobot_recordings/
 lerobot/
 *.pyc
 __pycache__/
+training_logs/
