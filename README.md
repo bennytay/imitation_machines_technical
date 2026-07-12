@@ -209,47 +209,93 @@ Summary of process: The recording and conversion pipeline (Steps 1.3–1.4 above
 
 ### Training the ACT policy
 
-**Decision:** train via LeRobot's own `lerobot-train` CLI (`--policy.type=act`) rather than a hand-rolled training loop, on the host Mac (M2, MPS) rather than the ARM64 VM used for Steps 1–3.
+I trained the policy using LeRobot's own CLI. This ran on my host computer (m2 macbook air), not the VM. 
 
-**Reasoning:** the exercise brief itself points at "existing LeRobot scripts," and `lerobot-train` already gets normalization, checkpointing, and dataloading right — a custom loop would just be re-implementing that, with more room for subtle bugs (e.g. training-time vs. inference-time normalization drifting apart). Training is far more CPU-intensive than dataset conversion/visualization, and the VM has no GPU passthrough, so it runs on the host instead, reusing the dataset already copied there for visualization (see "Host Environment Setup" above) and the same pinned `lerobot` commit.
+```
+lerobot-train \
+  --dataset.repo_id=bennytay/so101_trace_i \
+  --dataset.root=~/lerobot_recordings/dataset \
+  --policy.type=act \
+  --policy.device=mps \
+  --policy.chunk_size=8 \
+  --policy.n_action_steps=8 \
+  --output_dir=~/lerobot_recordings/checkpoints/act_trace_i \
+  --job_name=act_trace_i \
+  --steps=5000 \
+  --batch_size=8 \
+  --save_freq=1000 \
+  --log_freq=50 \
+  --wandb.enable=false
+```
 
-`--policy.chunk_size`/`--policy.n_action_steps` were dropped from ACT's default of 100 to 8: this dataset's 10 episodes are only 12–15 frames long (144 frames total at fps=2), so a chunk size of 100 would be predicting almost nothing but padding repeats of the last action. `--steps=5000` was picked after a 10-step smoke test showed ~0.2s/step steady-state throughput on MPS (~5 steps/sec) — at that rate 5000 steps is ~30 minutes, comfortably inside the exercise's "train for about an hour" framing while giving a much more convincing curve than the first back-of-envelope guess of 2000 steps.
+Key things to note:
+- the chunk size was dropped from ACT default of 100 -> 8, because the episodes (given the simple nature of the demonstrated task) are only about 12-15 frames long so the 100 chunk size is not suitable.
 
-**Metrics tracked, and why:**
-- **`l1_loss`** — L1 distance between the policy's predicted action chunk and the ground-truth demonstrated actions. This is the core imitation signal: a downward trend is direct evidence the policy is fitting the demonstrated trajectory, independent of the VAE machinery below.
-- **`kld_loss`** — KL divergence between the CVAE encoder's latent posterior and its standard-normal prior (ACT trains as a conditional VAE). A high value means the encoder is leaning heavily on extra information smuggled through the latent rather than the observation; watching it fall tells you the latent is settling down rather than being (ab)used as a shortcut.
-- **`loss`** — the combined objective actually being optimized (`l1_loss + kl_weight * kld_loss`, `kl_weight=10.0`).
-- **`grad_norm`** (`grdn` in the logs) — a stability sanity check; a spike or NaN here would flag a bad learning rate or a data issue before wasting the rest of the training budget on a broken run.
+**What are ACT learning metrics**
 
-`lerobot-train` only logs the combined `loss`/`grad_norm`/`lr` to stdout by default — the `l1_loss`/`kld_loss` split is only surfaced through Weights & Biases, which this run intentionally skipped (`--wandb.enable=false`, to avoid requiring an account). To still get the breakdown, each saved checkpoint (every 1000 steps) was reloaded afterward and run through one forward pass over the full dataset to recompute `l1_loss`/`kld_loss` directly — a legitimate reconstruction since it's the exact same `ACTPolicy.forward()` call `lerobot-train` itself uses internally.
+Quantitative measures that track how well the model learns from data, and how effectively the resulting policy performs the intended task. 
+
+Categories:
+1. Training / optimisation metrics, done in learning process -> examples are: loss values, reconstruction error
+
+2. Evalutation / deployment metrics, these assess final policy's performance on the actual objective. 
+
+
+**Learning metrics I tracked**
+
+`l1_loss`
+
+$$\text{L1 Loss} = \frac{1}{n} \sum_{i=1}^{n} |x_i - y_i|$$
+
+This is defined as the mean absolute deviation between two vectors. 
+
+Why this is important:
+- the small dataset (10 episodes) mean that small variations / inconsistencies are common between episodes. l1 loss is good for this beacuse it is robust to outliers because they aren't amplified (compared to l2 loss for instance). It means the model can better learn patterns without having to overfit for noise
+- it is the CORE IMITATION SIGNAL: it gives the most interpretable measure of imitation quality => i.e. a decrease in l1_loss directly corresponds with an improvement in the policy, because it directly asks 'how far off is predicted action chunk from demonstrated actions?'
+
+`kld_loss`
+
+$$\text{kld\_loss} = D_{KL}(q(z \mid \text{obs}, \text{actions}) \parallel p(z \mid \text{obs}))$$
+
+For context, ACT uses a latent variable `z` to capture different ways of doing the same task. This is important because - e.g. in the case of learning the wave 'hello'; there are different but equally valid ways of doing this, i.e. some people do a more exaggerated, some people do a small one, some people do different positions. 
+
+`kld_loss` keeps the latent variable well behaved during training. 
+
+Because ACT is a conditional autoencoder, the model during training does:
+- encoder => produce distribution `
+- decoder => use sample of `z` to predict action chunk $q(z \mid \text{obs}, \text{actions})$
+
+SO KLD loss asks how different the distrubution is, from the prior distribution. It effectively penalises the model if it piuts too much info on `z` that isn't actually inferrable from the observations. Utltimately - it enforces the effectiveness of the nature of the ACT algorithm, and handles variation. 
+
+
+`loss`
+
+This is the combined objective actually being optimized (`l1_loss + kl_weight * kld_loss`, `kl_weight=10.0`). Combines the metrics of `l1_loss` and `kld_loss` as explaning above.
+
+`grad_norm`
+
+$$\text{grad\_norm} = \sqrt{\sum_{i} \left( \frac{\partial \text{loss}}{\partial w_i} \right)^2}$$
+
+This is a monitoring metric, and it essentially measures the magnitude of the gradients during backpropagation. 
+
+This is important because it detects exploding gradients, and training instability. A spike / NaN here flags a bad learning rate and data issue, and this early check allows you to stop before wasting time on a broken run. 
 
 **What was observed:**
 
-| step | total loss | l1_loss | kld_loss |
-|---|---|---|---|
-| 1000 | 1.751 | 0.185 | 0.157 |
-| 2000 | 1.049 | 0.151 | 0.090 |
-| 3000 | 0.598 | 0.129 | 0.047 |
-| 4000 | 0.375 | 0.120 | 0.025 |
-| 5000 | 0.264 | 0.117 | 0.015 |
+| step | total loss | l1_loss | kld_loss | grad_norm |
+|---|---|---|---|---|
+| 1000 | 1.751 | 0.185 | 0.157 | 64.605 |
+| 2000 | 1.049 | 0.151 | 0.090 | 47.483 |
+| 3000 | 0.598 | 0.129 | 0.047 | 36.026 |
+| 4000 | 0.375 | 0.120 | 0.025 | 27.284 |
+| 5000 | 0.264 | 0.117 | 0.015 | 21.872 |
 
-(stdout's own running `loss` tracked this closely throughout, e.g. `loss:0.270` at step 5000 vs. the recomputed 0.264 — the small gap is just dropout being active for the stdout figure's live batch vs. this table's full-dataset re-evaluation.)
+(`total loss`/`l1_loss`/`kld_loss` are recomputed by reloading each checkpoint and re-evaluating on the full dataset, as described above — `grad_norm` isn't, since it only exists mid-backward-pass and can't be reconstructed from a saved checkpoint after the fact. Its column is instead read straight from `lerobot-train`'s own stdout log at that exact step. stdout's own running `loss` tracked the recomputed figure closely throughout too, e.g. `loss:0.270` at step 5000 vs. the recomputed 0.264 — the small gap is just dropout being active for the stdout figure's live batch vs. this table's full-dataset re-evaluation.)
 
-`l1_loss` fell steadily and kept improving through the full run (0.185 → 0.117) — direct evidence the policy is learning to reproduce the demonstrated trajectory, exactly the "sufficient that the model starts to learn" bar the exercise sets, without claiming full convergence on a 144-frame dataset. `kld_loss` collapsed an order of magnitude (0.157 → 0.015), meaning the latent posterior converged toward the prior rather than continuing to encode extra shortcut information — a well-behaved CVAE, not a sign of trouble (`kld_loss` decaying while `l1_loss` also keeps improving is the healthy pattern; `kld_loss` bottoming out early while `l1_loss` stalls would instead suggest posterior collapse).
+`l1_loss` fell steadily and kept improving through the full run (0.185 → 0.117) => direct evidence the policy is learning to reproduce the demonstrated trajectory, exactly the "sufficient that the model starts to learn" bar the exercise sets, without claiming full convergence on a 144-frame dataset. `kld_loss` collapsed an order of magnitude (0.157 → 0.015), meaning the latent posterior converged toward the prior rather than continuing to encode extra shortcut information — a well-behaved CVAE, not a sign of trouble (`kld_loss` decaying while `l1_loss` also keeps improving is the healthy pattern; `kld_loss` bottoming out early while `l1_loss` stalls would instead suggest posterior collapse). `grad_norm` fell smoothly the whole run too (64.6 → 21.9) with no spikes — no sign of instability, consistent with the low `1e-5` learning rate `lerobot-train` uses as its ACT preset.
 
-The trained checkpoint is committed at `checkpoints/act_final/` via Git LFS (`model.safetensors` alone is ~200MB, over GitHub's 100MB push limit for a plain commit).
+For `grad_norm`: it went from 64.6 at step 1000 down to 21.9 at step 5000, monotonically, with no spikes or plateaus anywhere in between. Some of that decrease is just a byproduct of `l1_loss`/`kld_loss` also falling, smaller loss generally means the loss landscape is flatter near the current weights, so gradients shrink somewhat mechanically as training approaches a local minimum, not purely because of stability.
 
-### Live inference across the Python split
-
-**Technical Constraint:** same 3.10/3.12 split as everywhere else in this repo, but this time it has to work in both directions, live: the trained policy only runs in the LeRobot venv (3.12), while the arm is only reachable via `rclpy` (3.10-only), and unlike Steps 1–4's file-based handoff, there's no "convert once, read later" — a running policy needs an observation and has to return an action on every tick.
-
-**Decision:** a small stdlib-only loopback TCP socket between two new pieces — `policy_bridge_node.py` (ROS2 node, 3.10) and `run_policy.py` (3.12) — using a length-prefixed JSON protocol, rather than a message broker like ZeroMQ or ROS2's own multi-language bridging.
-
-**Reasoning:** `policy_bridge_node.py` renders the same observation shape the policy was trained on (mirrors `episode_recorder_node.py`'s read-only-model rendering setup) and publishes whatever action comes back exactly like `motion.py` does — so `mujoco_bridge_node.py` needs zero changes, preserving the topic-only decoupling described above. A blocking request/response loop is sufficient because the system already runs at only a few Hz due to OSMesa's software rendering overhead (see below), so there's no latency budget a synchronous socket call would violate. ZeroMQ was considered and rejected: it would mean installing `pyzmq` in both venvs for a plain 1:1 request/response pattern that a ~40-line stdlib socket wrapper already handles, which doesn't match this repo's existing bias toward not adding a dependency when the standard library covers it (same reasoning as the `JacobianIKSolver` decision above).
-
-**Gotcha:** loading a checkpoint back with `ACTPolicy.from_pretrained()` surfaced two non-obvious issues, both in `run_policy.py`:
-1. LeRobot's own `pretrained.py` does `import packaging` and then reads `packaging.version.parse(...)` — that only works if something else already imported the `packaging.version` submodule first. `run_policy.py` adds an explicit `import packaging.version` up top to avoid an `AttributeError` at load time.
-2. `policy.to(device)` only moves the model's existing parameters. `policy.config.device` (saved as `"mps"`, since training ran on the host Mac) is read directly by parts of the model that create fresh tensors on the fly, and separately by the saved preprocessor pipeline's own device step — both have to be overridden explicitly (`policy.config.device = args.device` and `make_pre_post_processors(..., preprocessor_overrides={'device_processor': {'device': args.device}})`) or inference silently tries to mix `mps` and `cpu` tensors and crashes.
 
 </details>
 
