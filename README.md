@@ -89,13 +89,13 @@ cd lerobot && pip install -e ".[training]"   # torch/torchvision pulled in as co
 
 lerobot-train \
   --dataset.repo_id=bennytay/so101_trace_i \
-  --dataset.root=~/lerobot_recordings/dataset \
+  --dataset.root=$HOME/dev/lerobot_recordings/dataset_trace_i \
   --policy.type=act \
   --policy.device=mps \
   --policy.chunk_size=8 \
   --policy.n_action_steps=8 \
   --policy.push_to_hub=false \
-  --output_dir=~/lerobot_recordings/checkpoints/act_trace_i \
+  --output_dir=$HOME/lerobot_recordings/checkpoints/act_trace_i \
   --job_name=act_trace_i \
   --steps=5000 \
   --batch_size=8 \
@@ -124,6 +124,18 @@ ros2 run so101_bridge policy_bridge --ros-args -p mjcf_path:=$HOME/mujoco_menage
 ```
 With Terminal 1 still running, you should see the arm move under the trained policy instead of the scripted `trace_letter_i` driver.
 
+**Optional — plot the commanded joints live:** the policy's output actions are just messages on `so101/joint_commands`, same as any other node's, so any ROS2 introspection tool works against them with zero code changes:
+```bash
+# Terminal 4
+sudo apt install ros-humble-rqt-plot   # one-time
+source ~/ros2_ws/install/setup.bash
+ros2 run rqt_plot rqt_plot \
+  "/so101/joint_commands/data[0]" "/so101/joint_commands/data[1]" \
+  "/so101/joint_commands/data[2]" "/so101/joint_commands/data[3]" \
+  "/so101/joint_commands/data[4]" "/so101/joint_commands/data[5]"
+```
+(quote each `data[N]` — `[`/`]` are shell glob characters and can error unquoted, depending on your shell). Swap `joint_commands` for `joint_states` to plot the arm's actual measured position instead of the policy's commanded action.
+
 ### Host Environment Setup (for dataset visualization only)
 
 The visualizer (`lerobot-dataset-viz`) requires GPU-backed rendering and was run on the host machine (macOS, Apple Silicon) rather than the VM used for Steps 1–3. This is a separate environment from the ROS2/MuJoCo VM setup above.
@@ -145,7 +157,11 @@ conda install ffmpeg -c conda-forge -y
 pip install -e ".[dataset_viz]"
 ```
 
-Then copy the dataset from the VM and run the visualizer as described below.
+Copy the dataset from the VM to the host at this exact path — **Step 1.5's Path A training command below reads from here**, not from `~/lerobot_recordings/dataset` (that's the VM's own path from Step 1.4; the host copy lives somewhere different and is renamed):
+```bash
+scp -r bennytay@<vm-ip>:~/lerobot_recordings/dataset ~/dev/lerobot_recordings/dataset_trace_i
+```
+Then run the visualizer as described below.
 
 </details>
 
@@ -231,13 +247,13 @@ I trained the policy using LeRobot's own CLI. This ran on my host computer (m2 m
 ```
 lerobot-train \
   --dataset.repo_id=bennytay/so101_trace_i \
-  --dataset.root=~/lerobot_recordings/dataset \
+  --dataset.root=$HOME/dev/lerobot_recordings/dataset_trace_i \
   --policy.type=act \
   --policy.device=mps \
   --policy.chunk_size=8 \
   --policy.n_action_steps=8 \
   --policy.push_to_hub=false \
-  --output_dir=~/lerobot_recordings/checkpoints/act_trace_i \
+  --output_dir=$HOME/lerobot_recordings/checkpoints/act_trace_i \
   --job_name=act_trace_i \
   --steps=5000 \
   --batch_size=8 \
@@ -299,6 +315,8 @@ This is a monitoring metric, and it essentially measures the magnitude of the gr
 This is important because it detects exploding gradients, and training instability. A spike / NaN here flags a bad learning rate and data issue, and this early check allows you to stop before wasting time on a broken run. 
 
 **What was observed:**
+
+![ACT training loss (total/l1/kld) and grad_norm over 5000 steps, SO-101 trace-I task](images/diagrams/training_metrics.png)
 
 | step | total loss | l1_loss | kld_loss | grad_norm |
 |---|---|---|---|---|
