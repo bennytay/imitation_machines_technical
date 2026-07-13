@@ -105,52 +105,10 @@ lerobot-train \
 ```
 `--policy.chunk_size`/`--policy.n_action_steps` are overridden down from ACT's default of 100: this dataset's episodes are only 12–15 frames long (10 episodes, 144 frames total, fps=2), so a chunk size of 100 would be almost entirely padding.
 
-**Watching it train live (optional, e.g. for a demo/recording):** `lerobot-train` prints `loss`/`grad_norm`/`lr` to stdout every `--log_freq` steps as it runs — that's already a live view of those three metrics, no extra tooling needed. `l1_loss`/`kld_loss` are **not** available live this way (see "Training the ACT policy" below for why); those only ever come from Weights & Biases (`--wandb.enable=true`, needs a free account) or the post-hoc checkpoint-reload trick used to build this README's own results. For a quick live look without committing to the full ~30 minute run, point `--output_dir` somewhere throwaway and cap `--steps` low:
-```bash
-lerobot-train \
-  --dataset.repo_id=bennytay/so101_trace_i \
-  --dataset.root=$HOME/dev/lerobot_recordings/dataset_trace_i \
-  --policy.type=act --policy.device=mps \
-  --policy.chunk_size=8 --policy.n_action_steps=8 \
-  --policy.push_to_hub=false \
-  --output_dir=/tmp/act_video_demo \
-  --job_name=act_video_demo --steps=300 --batch_size=8 \
-  --save_freq=300 --log_freq=25 --wandb.enable=false
-```
-Let it print a handful of lines (`loss` visibly ticking down), `Ctrl+C` whenever — nothing else reads from `/tmp/act_video_demo`, safe to kill early and `rm -rf` afterward.
-
-**Path B — run the provided checkpoint directly (recommended for a quick check)**
-
-Running the trained policy live needs a relay across the same Python-version split as everywhere else in this repo (see "Live inference across the Python split" below): `run_policy.py` runs the policy in the LeRobot venv (3.12) and serves it over a local socket; `policy_bridge_node.py` runs as a ROS2 node (3.10) that feeds it observations and republishes its actions to `so101/joint_commands`, replacing `trace_letter_i`/`motion.py` as the thing driving the arm.
-
-```bash
-# Terminal 1 (unchanged): the bridge
-ros2 run so101_bridge mujoco_bridge --ros-args -p mjcf_path:=$HOME/mujoco_menagerie/robotstudio_so101/scene.xml
-
-# Terminal 2 (LeRobot venv, Python 3.12) -- start this first, it listens for Terminal 3
-source ~/venvs/lerobot/bin/activate
-python3 run_policy.py --checkpoint checkpoints/act_final
-
-# Terminal 3 (ROS2, Python 3.10) -- start only after Terminal 2 logs "Listening on ..."
-ros2 run so101_bridge policy_bridge --ros-args -p mjcf_path:=$HOME/mujoco_menagerie/robotstudio_so101/scene.xml
-```
-With Terminal 1 still running, you should see the arm move under the trained policy instead of the scripted `trace_letter_i` driver.
-
-**Optional — plot the commanded joints live:** the policy's output actions are just messages on `so101/joint_commands`, same as any other node's, so any ROS2 introspection tool works against them with zero code changes:
-```bash
-# Terminal 4
-sudo apt install ros-humble-rqt-plot   # one-time
-source ~/ros2_ws/install/setup.bash
-ros2 run rqt_plot rqt_plot \
-  "/so101/joint_commands/data[0]" "/so101/joint_commands/data[1]" \
-  "/so101/joint_commands/data[2]" "/so101/joint_commands/data[3]" \
-  "/so101/joint_commands/data[4]" "/so101/joint_commands/data[5]"
-```
-(quote each `data[N]` — `[`/`]` are shell glob characters and can error unquoted, depending on your shell). Swap `joint_commands` for `joint_states` to plot the arm's actual measured position instead of the policy's commanded action.
 
 ### Host Environment Setup (for dataset visualization only)
 
-The visualizer (`lerobot-dataset-viz`) requires GPU-backed rendering and was run on the host machine (macOS, Apple Silicon) rather than the VM used for Steps 1–3. This is a separate environment from the ROS2/MuJoCo VM setup above.
+The visualizer (`lerobot-dataset-viz`) requires GPU-backed rendering and was run on the host machine (macOS, Apple Silicon) rather than the VM used for Steps 1–3. This is a separate environment from the ROS2/MuJoCo VM setup.
 
 ```bash
 # Clone lerobot on the host, checked out at the same commit used for recording/conversion
