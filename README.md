@@ -107,6 +107,20 @@ lerobot-train \
 
 This produces `~/lerobot_recordings/checkpoints/act_trace_i/checkpoints/last/pretrained_model/` — a directory (config.json + model.safetensors + the bundled normalization stats), not a single checkpoint file. Copy it into the repo as `checkpoints/act_final/` to use with Path B (the committed one in this repo is tracked via Git LFS, since the weights are ~200MB).
 
+**Watching it train live (optional, e.g. for a demo/recording):** `lerobot-train` prints `loss`/`grad_norm`/`lr` to stdout every `--log_freq` steps as it runs — that's already a live view of those three metrics, no extra tooling needed. `l1_loss`/`kld_loss` are **not** available live this way (see "Training the ACT policy" below for why); those only ever come from Weights & Biases (`--wandb.enable=true`, needs a free account) or the post-hoc checkpoint-reload trick used to build this README's own results. For a quick live look without committing to the full ~30 minute run, point `--output_dir` somewhere throwaway and cap `--steps` low:
+```bash
+lerobot-train \
+  --dataset.repo_id=bennytay/so101_trace_i \
+  --dataset.root=$HOME/dev/lerobot_recordings/dataset_trace_i \
+  --policy.type=act --policy.device=mps \
+  --policy.chunk_size=8 --policy.n_action_steps=8 \
+  --policy.push_to_hub=false \
+  --output_dir=/tmp/act_video_demo \
+  --job_name=act_video_demo --steps=300 --batch_size=8 \
+  --save_freq=300 --log_freq=25 --wandb.enable=false
+```
+Let it print a handful of lines (`loss` visibly ticking down), `Ctrl+C` whenever — nothing else reads from `/tmp/act_video_demo`, safe to kill early and `rm -rf` afterward.
+
 **Path B — run the provided checkpoint directly (recommended for a quick check)**
 
 Running the trained policy live needs a relay across the same Python-version split as everywhere else in this repo (see "Live inference across the Python split" below): `run_policy.py` runs the policy in the LeRobot venv (3.12) and serves it over a local socket; `policy_bridge_node.py` runs as a ROS2 node (3.10) that feeds it observations and republishes its actions to `so101/joint_commands`, replacing `trace_letter_i`/`motion.py` as the thing driving the arm.
