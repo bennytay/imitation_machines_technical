@@ -9,6 +9,8 @@ This README is organized into three parts:
 
 The trained checkpoint is committed at `checkpoints/act_final/` via **Git LFS**. 
 
+All writing in my own words (AI used for research purposes only)
+
 <details>
 <summary><h2>1. Instructions</h2></summary>
 
