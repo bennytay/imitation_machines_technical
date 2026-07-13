@@ -249,7 +249,9 @@ Categories:
 
 `l1_loss`
 
-$$\text{L1 Loss} = \frac{1}{n} \sum_{i=1}^{n} |x_i - y_i|$$
+$$
+\text{L1 Loss} = \frac{1}{n} \sum_{i=1}^{n} |x_i - y_i|
+$$
 
 This is defined as the mean absolute deviation between two vectors. 
 
@@ -259,14 +261,16 @@ Why this is important:
 
 `kld_loss`
 
-$$\text{kld\_loss} = D_{KL}(q(z \mid \text{obs}, \text{actions}) \parallel p(z \mid \text{obs}))$$
+$$
+\text{kld\_loss} = D_{KL}(q(z \mid \text{obs}, \text{actions}) \parallel p(z \mid \text{obs}))
+$$
 
 For context, ACT uses a latent variable `z` to capture different ways of doing the same task. This is important because - e.g. in the case of learning the wave 'hello'; there are different but equally valid ways of doing this, i.e. some people do a more exaggerated, some people do a small one, some people do different positions. 
 
 `kld_loss` keeps the latent variable well behaved during training. 
 
 Because ACT is a conditional autoencoder, the model during training does:
-- encoder => produce distribution `
+- encoder => produce distribution `q(z | obs, actions)`
 - decoder => use sample of `z` to predict action chunk $q(z \mid \text{obs}, \text{actions})$
 
 SO KLD loss asks how different the distrubution is, from the prior distribution. It effectively penalises the model if it piuts too much info on `z` that isn't actually inferrable from the observations. Utltimately - it enforces the effectiveness of the nature of the ACT algorithm, and handles variation. 
@@ -278,7 +282,9 @@ This is the combined objective actually being optimized (`l1_loss + kl_weight * 
 
 `grad_norm`
 
-$$\text{grad\_norm} = \sqrt{\sum_{i} \left( \frac{\partial \text{loss}}{\partial w_i} \right)^2}$$
+$$
+\text{grad\_norm} = \sqrt{\sum_{i} \left( \frac{\partial \text{loss}}{\partial w_i} \right)^2}
+$$
 
 This is a monitoring metric, and it essentially measures the magnitude of the gradients during backpropagation. 
 
