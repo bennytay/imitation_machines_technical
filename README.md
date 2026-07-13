@@ -40,6 +40,20 @@ ros2 run so101_bridge trace_letter_i --ros-args \
 ```
 Expected result: the arm's end effector traces a capital "I" (top bar, middle stroke, bottom bar) via numerical IK 
 
+**How to load in different robots**
+
+`mujoco_bridge_node.py` only needs an `mjcf_path`, so any Menagerie model loads the same way:
+```bash
+# Franka Emika Panda
+ros2 run so101_bridge mujoco_bridge --ros-args -p mjcf_path:=$HOME/mujoco_menagerie/franka_emika_panda/scene.xml
+
+# Boston Dynamics Spot
+ros2 run so101_bridge mujoco_bridge --ros-args -p mjcf_path:=$HOME/mujoco_menagerie/boston_dynamics_spot/scene.xml
+
+# Unitree G1
+ros2 run so101_bridge mujoco_bridge --ros-args -p mjcf_path:=$HOME/mujoco_menagerie/unitree_g1/scene.xml
+```
+
 ### 1.3 Record an episode dataset
 ```bash
 # Terminal 3 — recorder (python 3.10)
