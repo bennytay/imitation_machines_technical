@@ -5,6 +5,10 @@ This README is organized into three parts:
 2. **Design**: explaning key design decisions
 3. **Figures & Media**: screenshots + video demonstrating results from the different steps
 
+## Trained model
+
+The trained checkpoint is committed at `checkpoints/act_final/` via **Git LFS**. 
+
 <details>
 <summary><h2>1. Instructions</h2></summary>
 
