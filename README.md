@@ -77,9 +77,9 @@ Expected result: a validated `LeRobotDataset` at `~/lerobot_recordings/dataset`,
 
 Two paths are supported, depending on how much of the pipeline you want to reproduce. **Path B is faster and sufficient to see the trained policy control the arm; Path A additionally verifies the training run itself.**
 
-**Path A — train from scratch**
+**To train from scratch:**
+Training needs Python 3.12 + torch.
 
-Training needs Python 3.12 + torch, same constraint as dataset conversion/visualization — but unlike those steps, training is CPU-heavy enough that it's worth running on the host Mac (M2, MPS-accelerated) rather than the ARM64 VM, which has no GPU passthrough. This reuses the same pinned `lerobot` clone and the dataset already copied to the host for visualization (see "Host Environment Setup" below — do that first if you haven't) and LeRobot's own training CLI, rather than a hand-rolled training loop:
 ```bash
 # Host Mac, from inside the same lerobot clone used for Host Environment Setup below,
 # but a separate Python 3.12 conda env with the training extras (not lerobot-viz)
@@ -103,9 +103,7 @@ lerobot-train \
   --log_freq=50 \
   --wandb.enable=false
 ```
-`--policy.chunk_size`/`--policy.n_action_steps` are overridden down from ACT's default of 100: this dataset's episodes are only 12–15 frames long (10 episodes, 144 frames total, fps=2), so a chunk size of 100 would be almost entirely padding. See "Training the ACT policy" below for why `--steps=5000` and what the loss curve looked like.
-
-This produces `~/lerobot_recordings/checkpoints/act_trace_i/checkpoints/last/pretrained_model/` — a directory (config.json + model.safetensors + the bundled normalization stats), not a single checkpoint file. Copy it into the repo as `checkpoints/act_final/` to use with Path B (the committed one in this repo is tracked via Git LFS, since the weights are ~200MB).
+`--policy.chunk_size`/`--policy.n_action_steps` are overridden down from ACT's default of 100: this dataset's episodes are only 12–15 frames long (10 episodes, 144 frames total, fps=2), so a chunk size of 100 would be almost entirely padding.
 
 **Watching it train live (optional, e.g. for a demo/recording):** `lerobot-train` prints `loss`/`grad_norm`/`lr` to stdout every `--log_freq` steps as it runs — that's already a live view of those three metrics, no extra tooling needed. `l1_loss`/`kld_loss` are **not** available live this way (see "Training the ACT policy" below for why); those only ever come from Weights & Biases (`--wandb.enable=true`, needs a free account) or the post-hoc checkpoint-reload trick used to build this README's own results. For a quick live look without committing to the full ~30 minute run, point `--output_dir` somewhere throwaway and cap `--steps` low:
 ```bash
