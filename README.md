@@ -94,6 +94,7 @@ lerobot-train \
   --policy.device=mps \
   --policy.chunk_size=8 \
   --policy.n_action_steps=8 \
+  --policy.push_to_hub=false \
   --output_dir=~/lerobot_recordings/checkpoints/act_trace_i \
   --job_name=act_trace_i \
   --steps=5000 \
@@ -235,6 +236,7 @@ lerobot-train \
   --policy.device=mps \
   --policy.chunk_size=8 \
   --policy.n_action_steps=8 \
+  --policy.push_to_hub=false \
   --output_dir=~/lerobot_recordings/checkpoints/act_trace_i \
   --job_name=act_trace_i \
   --steps=5000 \
