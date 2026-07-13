@@ -4,3 +4,4 @@ lerobot/
 *.pyc
 __pycache__/
 training_logs/
+.gstack/
