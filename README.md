@@ -25,6 +25,8 @@ cd ~/ros2_ws && colcon build # compiles + installs ROS2 packages
 source install/setup.bash # add package to ROS2 runtime env
 ```
 
+note `colcon build` only needs to be re run when source code changes. but `source install/setup.bash` must be run in every new terminal session. 
+
 ### 1.2 Run the simulator + bridge
 
 ```bash
