@@ -328,8 +328,8 @@ For `grad_norm`: it went from 64.6 at step 1000 down to 21.9 at step 5000, monot
 
 ![Rerun viewer showing the SO-101 camera feed, action trajectory, and joint state for the converted I-trace dataset](images/robot_gifs/lerobot_dataset_viz.gif)
 
-**[INSERT: figure — two-process architecture (Python 3.10 ROS2 side / Python 3.12 LeRobot side)]**
+**Live deployment => arm driven by the trained ACT policy (Step 4):**
 
-**[INSERT: video — arm driven by the trained ACT policy (Step 4)]**
+![SO-101 arm driven live by the trained ACT policy via run_policy.py + policy_bridge_node.py](images/robot_gifs/policy_deployment.gif)
 
 </details>
